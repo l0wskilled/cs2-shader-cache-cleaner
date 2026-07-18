@@ -1,8 +1,10 @@
 name: Build and Release Windows App
 on:
   push:
+    branches:
+      - main
     tags:
-      - 'v*' # Triggered immer, wenn ein Push mit einem Tag passiert, der mit "v" beginnt (z.B. v1.0.0)
+      - 'v*'
 
 jobs:
   build:
@@ -20,10 +22,19 @@ jobs:
       - name: Publish Standalone EXE
         run: dotnet publish CS2ShaderCleaner.csproj -c Release -r win-x64 --self-contained true /p:PublishSingleFile=true /p:PublishTrimmed=false -o ./dist
 
+      # SCHRITT A: Wird IMMER ausgeführt. Speichert die EXE intern in den Actions (Artifacts)
+      - name: Upload Internal Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: CS2ShaderCleaner-DevBuild
+          path: ./dist/CS2ShaderCleaner.exe
+
+      # SCHRITT B: Wird NUR ausgeführt, wenn es sich um einen Version-Tag handelt
       - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.ref_name }} # Holt sich automatisch den Tag-Namen (z.B. v1.0.0)
+          tag_name: ${{ github.ref_name }}
           name: Release ${{ github.ref_name }}
           body: |
             Official standalone executable for the CS2 Shader Cache Cleaner (${{ github.ref_name }}).
