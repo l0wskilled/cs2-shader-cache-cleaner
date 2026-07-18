@@ -6,6 +6,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using Microsoft.Win32;
+using System.Linq; // Hinzugefügt für die Service-Prüfung
 
 namespace CS2ShaderCleaner
 {
@@ -90,7 +91,7 @@ namespace CS2ShaderCleaner
             KillProcess("steam");
             KillProcess("cs2");
 
-            // 2. Shut down the Nvidia Container Services
+            // 2. Shut down the Nvidia Container Services (AMD skips this)
             string nvidiaService = "NVDisplay.ContainerLocalSystem";
             StopNvidiaService(nvidiaService);
 
@@ -100,20 +101,30 @@ namespace CS2ShaderCleaner
             // 3. Clear Caches
             string localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
             
-            Log("Clearing Nvidia DXCache directory...");
-            ClearFolder(Path.Combine(localAppData, @"Nvidia\DXCache"));
+            // --- NVIDIA ---
+            Log("Checking NVIDIA Caches...");
+            ClearFolder(Path.Combine(localAppData, @"NVIDIA\DXCache"));
+            ClearFolder(Path.Combine(localAppData, @"NVIDIA\GLCache"));
 
-            Log("Clearing Nvidia GLCache directory...");
-            ClearFolder(Path.Combine(localAppData, @"Nvidia\GLCache"));
+            // --- AMD ---
+            Log("Checking AMD Caches...");
+            ClearFolder(Path.Combine(localAppData, @"AMD\DxCache"));
+            ClearFolder(Path.Combine(localAppData, @"AMD\GLCache"));
+            ClearFolder(Path.Combine(localAppData, @"AMD\VkCache")); // Vulkan cache
 
+            // --- General Windows DirectX ---
+            Log("Checking general Windows DirectX Cache...");
+            ClearFolder(Path.Combine(localAppData, "D3DSCache"));
+
+            // --- CS2 ---
             Log("Clearing CS2 Steam Shader Cache (AppID 730)...");
             string cs2CachePath = Path.Combine(steamPath, @"steamapps\shadercache\730");
             ClearFolder(cs2CachePath);
 
-            // 4. Restore Services
+            // 4. Restore Services (AMD skips this)
             StartNvidiaService(nvidiaService);
 
-            // 5. Hard refresh display adapter configuration
+            // 5. Hard refresh display adapter configuration (works for AMD & NVIDIA via wildcard)
             RestartGraphicsDriver();
 
             Log("Success! All shader files have been wiped.");
@@ -205,6 +216,10 @@ namespace CS2ShaderCleaner
         {
             try
             {
+                // Check if service exists first (skips error logs for AMD users)
+                if (!ServiceController.GetServices().Any(s => s.ServiceName == serviceName))
+                    return;
+
                 ServiceController sc = new ServiceController(serviceName);
                 if (sc.Status == ServiceControllerStatus.Running || sc.Status == ServiceControllerStatus.StartPending)
                 {
@@ -221,6 +236,10 @@ namespace CS2ShaderCleaner
         {
             try
             {
+                // Check if service exists first (skips error logs for AMD users)
+                if (!ServiceController.GetServices().Any(s => s.ServiceName == serviceName))
+                    return;
+
                 ServiceController sc = new ServiceController(serviceName);
                 if (sc.Status == ServiceControllerStatus.Stopped || sc.Status == ServiceControllerStatus.StopPending)
                 {
