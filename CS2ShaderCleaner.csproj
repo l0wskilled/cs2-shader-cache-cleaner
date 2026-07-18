@@ -6,6 +6,8 @@
     <Nullable>enable</Nullable>
     <UseWpf>true</UseWpf>
     <ImplicitUsings>enable</ImplicitUsings>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <PublishTrimmed>true</PublishTrimmed>
   </PropertyGroup>
 
   <ItemGroup>
