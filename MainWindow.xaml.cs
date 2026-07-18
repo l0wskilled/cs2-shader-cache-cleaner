@@ -15,23 +15,28 @@ namespace CS2ShaderCleaner
         public MainWindow()
         {
             InitializeComponent();
-            AutoDetectSteamPath();
+            AutoDetectCS2Path();
         }
 
-        private void AutoDetectSteamPath()
+        private void AutoDetectCS2Path()
         {
             try
             {
-                using (RegistryKey key = Registry.LocalMachine.OpenSubKey(@"SOFTWARE\WOW6432Node\Valve\Steam"))
+                using (RegistryKey key = Registry.LocalMachine.OpenSubKey(@"SOFTWARE\WOW6432Node\Valve\Steam") ?? 
+                                         Registry.LocalMachine.OpenSubKey(@"SOFTWARE\Valve\Steam"))
                 {
                     if (key != null)
                     {
                         string installPath = key.GetValue("InstallPath")?.ToString();
                         if (!string.IsNullOrEmpty(installPath))
                         {
-                            SteamPathTextBox.Text = installPath;
-                            Log("Auto-detected Steam installation folder successfully.");
-                            return;
+                            string cs2Guess = Path.Combine(installPath, @"steamapps\common\Counter-Strike Global Offensive");
+                            if (Directory.Exists(cs2Guess))
+                            {
+                                CS2PathTextBox.Text = cs2Guess;
+                                Log("Auto-detected CS2 installation folder successfully.");
+                                return;
+                            }
                         }
                     }
                 }
@@ -41,47 +46,48 @@ namespace CS2ShaderCleaner
                 Log($"Registry auto-detection notice: {ex.Message}");
             }
 
-            string defaultPath = @"C:\Program Files (x86)\Steam";
-            SteamPathTextBox.Text = Directory.Exists(defaultPath) ? defaultPath : "";
-            Log("Could not auto-detect Steam via registry. Defaulted or left empty.");
+            string defaultPath = @"C:\Program Files (x86)\Steam\steamapps\common\Counter-Strike Global Offensive";
+            CS2PathTextBox.Text = Directory.Exists(defaultPath) ? defaultPath : "";
+            Log("Could not auto-detect CS2 path. Defaulted or left empty.");
         }
 
         private void BrowseButton_Click(object sender, RoutedEventArgs e)
         {
             var dialog = new OpenFolderDialog
             {
-                Title = "Select your main Steam installation directory",
-                InitialDirectory = string.IsNullOrEmpty(SteamPathTextBox.Text) ? @"C:\" : SteamPathTextBox.Text
+                Title = @"Select your CS2 folder (e.g. steamapps\common\Counter-Strike Global Offensive)",
+                InitialDirectory = string.IsNullOrEmpty(CS2PathTextBox.Text) ? @"C:\" : CS2PathTextBox.Text
             };
 
             if (dialog.ShowDialog() == true)
             {
-                SteamPathTextBox.Text = dialog.FolderName;
+                CS2PathTextBox.Text = dialog.FolderName;
                 Log($"Manually selected path: {dialog.FolderName}");
             }
         }
 
         private async void StartButton_Click(object sender, RoutedEventArgs e)
         {
-            string steamPath = SteamPathTextBox.Text;
+            string cs2Path = CS2PathTextBox.Text;
 
-            if (string.IsNullOrEmpty(steamPath) || !Directory.Exists(steamPath))
+            if (string.IsNullOrEmpty(cs2Path) || !Directory.Exists(cs2Path))
             {
-                MessageBox.Show("Please select a valid Steam folder before starting.", "Invalid Path", MessageBoxButton.OK, MessageBoxImage.Warning);
+                MessageBox.Show("Please select a valid CS2 folder before starting.", "Invalid Path", MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }
 
+            SteamWarningText.Visibility = Visibility.Collapsed;
             StartButton.IsEnabled = false;
             LogTextBox.Clear();
             Log("=== Starting CS2 Shader Cache Cleansing Process ===");
 
-            await Task.Run(() => RunCleansingRoutine(steamPath));
+            await Task.Run(() => RunCleansingRoutine(cs2Path));
 
             StartButton.IsEnabled = true;
             Log("=== Process Finished Safely ===");
         }
 
-        private void RunCleansingRoutine(string steamPath)
+        private void RunCleansingRoutine(string cs2Path)
         {
             KillProcess("steam");
             KillProcess("cs2");
@@ -105,7 +111,25 @@ namespace CS2ShaderCleaner
 
             Log("--- Cleaning Windows & CS2 Caches ---");
             ClearFolder(Path.Combine(localAppData, "D3DSCache"), "DirectX D3DSCache");
-            ClearFolder(Path.Combine(steamPath, @"steamapps\shadercache\730"), "CS2 Steam Shader Cache");
+
+            // Navigate up to steamapps folder
+            try
+            {
+                DirectoryInfo steamappsDir = Directory.GetParent(cs2Path)?.Parent;
+                if (steamappsDir != null && steamappsDir.Name.Equals("steamapps", StringComparison.OrdinalIgnoreCase))
+                {
+                    string shaderCachePath = Path.Combine(steamappsDir.FullName, @"shadercache\730");
+                    ClearFolder(shaderCachePath, "CS2 Steam Shader Cache");
+                }
+                else
+                {
+                    Log("-> Error: Selected path doesn't seem to be inside a 'steamapps' structure. CS2 Cache skipped.");
+                }
+            }
+            catch (Exception ex)
+            {
+                Log($"-> Error traversing directories: {ex.Message}");
+            }
 
             Log("Restoring display services...");
             StartNvidiaService(nvidiaService);
@@ -113,16 +137,19 @@ namespace CS2ShaderCleaner
             RestartGraphicsDriver();
 
             Log("Success! Relevant CS2 shader files have been wiped.");
-            RestartSteamAsNormalUser(steamPath);
+            RestartSteamAsNormalUser(cs2Path);
         }
 
-        private void RestartSteamAsNormalUser(string steamPath)
+        private void RestartSteamAsNormalUser(string cs2Path)
         {
             try
             {
-                string steamExe = Path.Combine(steamPath, "steam.exe");
+                // Go up from ...\steamapps\common\Counter-Strike Global Offensive to the steam root directory
+                DirectoryInfo steamappsDir = Directory.GetParent(cs2Path)?.Parent;
+                string steamRoot = steamappsDir?.Parent?.FullName;
+                string steamExe = steamRoot != null ? Path.Combine(steamRoot, "steam.exe") : null;
                 
-                if (File.Exists(steamExe))
+                if (steamExe != null && File.Exists(steamExe))
                 {
                     Log("Restarting Steam with standard user privileges...");
                     Process.Start(new ProcessStartInfo
@@ -134,7 +161,12 @@ namespace CS2ShaderCleaner
                 }
                 else
                 {
-                    Log($"Notice: Could not find steam.exe at '{steamExe}'. Please start manually.");
+                    Log("Notice: Could not find steam.exe automatically. Please start manually.");
+                    // Show warning text safely on the UI thread
+                    Dispatcher.Invoke(() => 
+                    {
+                        SteamWarningText.Visibility = Visibility.Visible;
+                    });
                 }
             }
             catch (Exception ex)
