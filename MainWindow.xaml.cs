@@ -117,7 +117,37 @@ namespace CS2ShaderCleaner
             RestartGraphicsDriver();
 
             Log("Success! All shader files have been wiped.");
-            Log("You can safely start Steam and Counter-Strike 2 now.");
+            
+            // 6. Restart Steam as normal user (dropping Admin rights)
+            RestartSteamAsNormalUser(steamPath);
+        }
+
+        private void RestartSteamAsNormalUser(string steamPath)
+        {
+            try
+            {
+                string steamExe = Path.Combine(steamPath, "steam.exe");
+                
+                if (File.Exists(steamExe))
+                {
+                    Log("Restarting Steam with standard user privileges...");
+                    
+                    Process.Start(new ProcessStartInfo
+                    {
+                        FileName = "explorer.exe",
+                        Arguments = $"\"{steamExe}\"",
+                        UseShellExecute = true
+                    });
+                }
+                else
+                {
+                    Log($"Notice: Could not find steam.exe at '{steamExe}'. Please start manually.");
+                }
+            }
+            catch (Exception ex)
+            {
+                Log($"Notice: Failed to auto-start Steam: {ex.Message}");
+            }
         }
 
         private void ClearFolder(string folderPath)
