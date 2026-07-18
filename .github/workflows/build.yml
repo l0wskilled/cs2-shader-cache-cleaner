@@ -20,7 +20,7 @@ jobs:
           dotnet-version: 8.0.x
 
       - name: Publish Standalone EXE
-        run: dotnet publish CS2ShaderCleaner.csproj -c Release -r win-x64 --self-contained true /p:PublishSingleFile=true /p:PublishTrimmed=false -o ./dist
+        run: dotnet publish CS2ShaderCleaner.csproj -c Release -r win-x64 --self-contained true /p:PublishSingleFile=true /p:IncludeNativeLibrariesForSelfExtract=true /p:PublishTrimmed=false -o ./dist
 
       # SCHRITT A: Wird IMMER ausgeführt. Speichert die EXE intern in den Actions (Artifacts)
       - name: Upload Internal Artifact
