@@ -1,9 +1,14 @@
-name: Build Windows App
-on: [push, workflow_dispatch] # workflow_dispatch erlaubt manuelles Starten
+name: Build and Release Windows App
+on:
+  push:
+    tags:
+      - 'v*' # Triggered immer, wenn ein Push mit einem Tag passiert, der mit "v" beginnt (z.B. v1.0.0)
 
 jobs:
   build:
     runs-on: windows-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
 
@@ -15,8 +20,17 @@ jobs:
       - name: Publish Standalone EXE
         run: dotnet publish CS2ShaderCleaner.csproj -c Release -r win-x64 --self-contained true /p:PublishSingleFile=true /p:PublishTrimmed=false -o ./dist
 
-      - name: Upload Artifact
-        uses: actions/upload-artifact@v4
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
         with:
-          name: CS2-Shader-Cleaner-Executable
-          path: ./dist/CS2ShaderCleaner.exe
+          tag_name: ${{ github.ref_name }} # Holt sich automatisch den Tag-Namen (z.B. v1.0.0)
+          name: Release ${{ github.ref_name }}
+          body: |
+            Official standalone executable for the CS2 Shader Cache Cleaner (${{ github.ref_name }}).
+            
+            **Instructions:**
+            1. Download `CS2ShaderCleaner.exe` below.
+            2. Right-click the file and select **"Run as Administrator"**.
+          draft: false
+          prerelease: false
+          files: ./dist/CS2ShaderCleaner.exe
