@@ -6,19 +6,59 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using Microsoft.Win32;
-using System.Linq; // Hinzugefügt für die Service-Prüfung
+using System.Linq;
 
 namespace CS2ShaderCleaner
 {
     public partial class MainWindow : Window
     {
+        private enum GpuVendor { Nvidia, Amd, Unknown }
+
         public MainWindow()
         {
             InitializeComponent();
             AutoDetectSteamPath();
         }
 
-        // Automatically queries the registry to find where Steam is installed
+        private GpuVendor DetectGpuVendor()
+        {
+            try
+            {
+                using (RegistryKey key = Registry.LocalMachine.OpenSubKey(@"SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}"))
+                {
+                    if (key != null)
+                    {
+                        foreach (string subKeyName in key.GetSubKeyNames())
+                        {
+                            if (subKeyName.Length == 4 && int.TryParse(subKeyName, out _))
+                            {
+                                using (RegistryKey subKey = key.OpenSubKey(subKeyName))
+                                {
+                                    string driverDesc = subKey?.GetValue("DriverDesc")?.ToString().ToLower();
+                                    string providerName = subKey?.GetValue("ProviderName")?.ToString().ToLower();
+
+                                    if (!string.IsNullOrEmpty(driverDesc))
+                                    {
+                                        if (driverDesc.Contains("nvidia") || (providerName != null && providerName.Contains("nvidia")))
+                                            return GpuVendor.Nvidia;
+
+                                        if (driverDesc.Contains("amd") || driverDesc.Contains("radeon") || (providerName != null && providerName.Contains("advanced micro devices")))
+                                            return GpuVendor.Amd;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Log($"GPU Detection notice: {ex.Message}");
+            }
+
+            return GpuVendor.Unknown;
+        }
+
         private void AutoDetectSteamPath()
         {
             try
@@ -42,13 +82,11 @@ namespace CS2ShaderCleaner
                 Log($"Registry auto-detection notice: {ex.Message}");
             }
 
-            // Default fallback path if registry check fails
             string defaultPath = @"C:\Program Files (x86)\Steam";
             SteamPathTextBox.Text = Directory.Exists(defaultPath) ? defaultPath : "";
             Log("Could not auto-detect Steam via registry. Defaulted or left empty.");
         }
 
-        // Folder Picker Button Click Action
         private void BrowseButton_Click(object sender, RoutedEventArgs e)
         {
             var dialog = new OpenFolderDialog
@@ -64,7 +102,6 @@ namespace CS2ShaderCleaner
             }
         }
 
-        // Async execution of the deletion script to prevent UI freezing
         private async void StartButton_Click(object sender, RoutedEventArgs e)
         {
             string steamPath = SteamPathTextBox.Text;
@@ -87,49 +124,64 @@ namespace CS2ShaderCleaner
 
         private void RunCleansingRoutine(string steamPath)
         {
-            // 1. Close background interference apps
             KillProcess("steam");
             KillProcess("cs2");
 
-            // 2. Shut down the Nvidia Container Services (AMD skips this)
-            string nvidiaService = "NVDisplay.ContainerLocalSystem";
-            StopNvidiaService(nvidiaService);
-
-            Log("Waiting 2 seconds for active system file handles to release...");
-            Thread.Sleep(2000);
-
-            // 3. Clear Caches
+            GpuVendor vendor = DetectGpuVendor();
             string localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-            
-            // --- NVIDIA ---
-            Log("Checking NVIDIA Caches...");
-            ClearFolder(Path.Combine(localAppData, @"NVIDIA\DXCache"));
-            ClearFolder(Path.Combine(localAppData, @"NVIDIA\GLCache"));
+            string nvidiaService = "NVDisplay.ContainerLocalSystem";
 
-            // --- AMD ---
-            Log("Checking AMD Caches...");
-            ClearFolder(Path.Combine(localAppData, @"AMD\DxCache"));
-            ClearFolder(Path.Combine(localAppData, @"AMD\GLCache"));
-            ClearFolder(Path.Combine(localAppData, @"AMD\VkCache")); // Vulkan cache
+            switch (vendor)
+            {
+                case GpuVendor.Nvidia:
+                    Log("Hardware Detection: NVIDIA GPU found.");
+                    StopNvidiaService(nvidiaService);
+                    
+                    Log("Waiting 2 seconds for active system file handles to release...");
+                    Thread.Sleep(2000);
+                    
+                    Log("Clearing NVIDIA Caches...");
+                    ClearFolder(Path.Combine(localAppData, @"NVIDIA\DXCache"));
+                    ClearFolder(Path.Combine(localAppData, @"NVIDIA\GLCache"));
+                    
+                    StartNvidiaService(nvidiaService);
+                    break;
 
-            // --- General Windows DirectX ---
+                case GpuVendor.Amd:
+                    Log("Hardware Detection: AMD GPU found.");
+                    Log("Clearing AMD Caches...");
+                    ClearFolder(Path.Combine(localAppData, @"AMD\DxCache"));
+                    ClearFolder(Path.Combine(localAppData, @"AMD\GLCache"));
+                    ClearFolder(Path.Combine(localAppData, @"AMD\VkCache"));
+                    break;
+
+                case GpuVendor.Unknown:
+                default:
+                    Log("Hardware Detection: Could not clearly identify GPU. Running universal wipe fallback.");
+                    StopNvidiaService(nvidiaService);
+                    
+                    Thread.Sleep(2000);
+                    
+                    ClearFolder(Path.Combine(localAppData, @"NVIDIA\DXCache"));
+                    ClearFolder(Path.Combine(localAppData, @"NVIDIA\GLCache"));
+                    ClearFolder(Path.Combine(localAppData, @"AMD\DxCache"));
+                    ClearFolder(Path.Combine(localAppData, @"AMD\GLCache"));
+                    ClearFolder(Path.Combine(localAppData, @"AMD\VkCache"));
+                    
+                    StartNvidiaService(nvidiaService);
+                    break;
+            }
+
             Log("Checking general Windows DirectX Cache...");
             ClearFolder(Path.Combine(localAppData, "D3DSCache"));
 
-            // --- CS2 ---
             Log("Clearing CS2 Steam Shader Cache (AppID 730)...");
             string cs2CachePath = Path.Combine(steamPath, @"steamapps\shadercache\730");
             ClearFolder(cs2CachePath);
 
-            // 4. Restore Services (AMD skips this)
-            StartNvidiaService(nvidiaService);
-
-            // 5. Hard refresh display adapter configuration (works for AMD & NVIDIA via wildcard)
             RestartGraphicsDriver();
 
             Log("Success! All shader files have been wiped.");
-            
-            // 6. Restart Steam as normal user (dropping Admin rights)
             RestartSteamAsNormalUser(steamPath);
         }
 
@@ -182,7 +234,7 @@ namespace CS2ShaderCleaner
                 }
                 catch (Exception)
                 {
-                    skippedFiles++; // Locked by Desktop Window Manager (DWM) or system
+                    skippedFiles++; 
                 }
             }
 
@@ -191,7 +243,7 @@ namespace CS2ShaderCleaner
                 try { dir.Delete(true); } catch { }
             }
 
-            Log($"-> Cleared folder target successfully. Wiped: {deletedFiles} files, Locked/Skipped: {skippedFiles}.");
+            Log($"-> Cleared target successfully. Wiped: {deletedFiles} files, Locked/Skipped: {skippedFiles}.");
         }
 
         private void KillProcess(string processName)
@@ -216,7 +268,6 @@ namespace CS2ShaderCleaner
         {
             try
             {
-                // Check if service exists first (skips error logs for AMD users)
                 if (!ServiceController.GetServices().Any(s => s.ServiceName == serviceName))
                     return;
 
@@ -236,7 +287,6 @@ namespace CS2ShaderCleaner
         {
             try
             {
-                // Check if service exists first (skips error logs for AMD users)
                 if (!ServiceController.GetServices().Any(s => s.ServiceName == serviceName))
                     return;
 
@@ -267,10 +317,9 @@ namespace CS2ShaderCleaner
                 };
                 Process.Start(psi);
             }
-            catch { /* Fallback handling */ }
+            catch { }
         }
 
-        // Thread-safe method to update the terminal UI log text box
         private void Log(string message)
         {
             Dispatcher.Invoke(() =>
